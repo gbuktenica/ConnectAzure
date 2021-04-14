@@ -1,0 +1,10 @@
+{
+    "Dev":{
+        "TenantId": "",
+        "SubscriptionId": ""
+    },
+    "Prod": {
+        "TenantId": "",
+        "SubscriptionId": ""
+    }
+}
