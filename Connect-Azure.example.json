@@ -1,0 +1,18 @@
+{
+    "Dev":{
+        "TenantId": "[SUBSCRIPTION ID HERE]",
+        "SubscriptionId": "[TENANT ID HERE]"
+    },
+    "Test": {
+        "TenantId": "[TENANT ID HERE]",
+        "SubscriptionId": "[SUBSCRIPTION ID HERE]"
+    },
+    "UAT": {
+        "TenantId": "[TENANT ID HERE]",
+        "SubscriptionId": "[SUBSCRIPTION ID HERE]"
+    },
+    "Prod": {
+        "TenantId": "[TENANT ID HERE]",
+        "SubscriptionId": "[SUBSCRIPTION ID HERE]"
+    }
+}
