@@ -37,13 +37,13 @@
 
     .NOTES
         License      : MIT License
-        Copyright (c): 2021 Glen Buktenica
-        Release      : v1.0.0 20210317
+        Copyright (c): 2025 Glen Buktenica
+        Release      : v2.0.0 20250107
 #>
 [CmdletBinding()]
 Param(
     [Parameter()]
-    [ValidateSet('Dev', 'Prod')]
+    [ValidateSet('Dev', 'Test', 'Prod')]
     [string]
     $Environment = "Dev",
     [String]
@@ -55,7 +55,9 @@ Param(
     [String]
     $InvokeArguments,
     [switch]
-    $Pipeline
+    $Pipeline,
+    [switch]
+    $UseDeviceAuthentication
 )
 function Get-SavedCredentials {
     <#
@@ -82,17 +84,25 @@ function Get-SavedCredentials {
         https://github.com/gbuktenica/GetSavedCredentials
     .NOTES
         License      : MIT License
-        Copyright (c): 2020 Glen Buktenica
-        Release      : v1.0.0 20200315
+        Copyright (c): 2025 Glen Buktenica
+        Release      : v2.0.0 20250107
     #>
     [CmdletBinding()]
     Param(
         [string]$Title = "Default",
-        [string]$VaultPath = "$env:USERPROFILE\PowerShellHash.json",
+        [string]$VaultPath,
         [switch]$Renew
     )
-    $JsonChanged = $false
-    if (-not (Test-path -Path $VaultPath)) {
+    if ($VaultPath.length -eq 0 ) {
+        if ($IsLinux) {
+            Write-Verbose "Is Linux"
+            $VaultPath = $HOME + "/PowerShellHash.json"
+        } else {
+            $VaultPath = "$env:USERPROFILE\PowerShellHash.json"
+        }
+        Write-Output $VaultPath
+    }
+    if (-not (Test-Path -Path $VaultPath)) {
         # Create a new Json object if the file does not exist.
         $Json = "{`"$Title`": { `"username`": `"`", `"password`": `"`" }}" | ConvertFrom-Json
         $JsonChanged = $true
@@ -109,7 +119,7 @@ function Get-SavedCredentials {
     if ($Json.$Title.length -eq 0) {
         # Create a new Username \ Password key if it is new.
         $TitleContent = " { `"username`":`"`", `"password`":`"`" }"
-        $Json | Add-Member -Name $Title -value (Convertfrom-Json $TitleContent) -MemberType NoteProperty
+        $Json | Add-Member -Name $Title -Value (ConvertFrom-Json $TitleContent) -MemberType NoteProperty
         $JsonChanged = $true
     }
     if ($Json.$Title.username.Length -eq 0) {
@@ -137,19 +147,19 @@ function Get-SavedCredentials {
         # If building the credential failed for any reason delete it and run the function
         # again which will prompt the user for username and password.
         $TitleContent = " { `"username`":`"`", `"password`":`"`" }"
-        $Json | Add-Member -Name $Title -value (Convertfrom-Json $TitleContent) -MemberType NoteProperty -Force
-        $Json | ConvertTo-Json -depth 3 | Set-Content $VaultPath -ErrorAction Stop
+        $Json | Add-Member -Name $Title -Value (ConvertFrom-Json $TitleContent) -MemberType NoteProperty -Force
+        $Json | ConvertTo-Json -Depth 3 | Set-Content $VaultPath -ErrorAction Stop
         Get-SavedCredentials -Title $Title -VaultPath $VaultPath
     }
     if ($JsonChanged) {
         # Save the Json object to file if it has changed.
-        $Json | ConvertTo-Json -depth 3 | Set-Content $VaultPath -ErrorAction Stop
+        $Json | ConvertTo-Json -Depth 3 | Set-Content $VaultPath -ErrorAction Stop
     }
 }
 $SaveVerbosePreference = $global:VerbosePreference
 
 # Install and import dependencies
-$Modules = @("Az.Accounts", "Az.Migrate", "Az.Resources", "Az.Storage","Az.Network")
+$Modules = @("Az.Accounts", "Az.Migrate", "Az.Resources", "Az.Storage", "Az.Network")
 foreach ($Module in $Modules) {
     if (-not (Get-Module -ListAvailable -Name $Module -Verbose:$false)) {
         Write-Output "Installing module $Module"
@@ -174,12 +184,18 @@ foreach ($Module in $Modules) {
 Write-Output "Finished Importing modules"
 
 # Read the Azure subscription settings from the json.
-if (Test-Path "$PsScriptRoot\Connect-Azure.json") {
-    $JsonParameters = Get-Content "$PsScriptRoot\Connect-Azure.json" -Raw -ErrorAction Stop | ConvertFrom-Json
-} else {
-    Write-Error "File $PsScriptRoot\Connect-Azure.json not found"
-    Exit
+if (-not (Test-Path "$PsScriptRoot\Connect-Azure.json")) {
+    $TenantId = Read-Host "Enter Tenant ID"
+    $SubscriptionId = Read-Host "Enter Subscription ID"
+    $Json = @{
+        $Environment = [ordered]@{
+            TenantId  = $TenantId
+            SubscriptionId = $SubscriptionId
+        }
+    }
+    $Json | ConvertTo-Json | Out-File -FilePath "$PsScriptRoot\Connect-Azure.json"
 }
+$JsonParameters = Get-Content "$PsScriptRoot\Connect-Azure.json" -Raw -ErrorAction Stop | ConvertFrom-Json
 $TenantId = $JsonParameters.$Environment.TenantId
 $SubscriptionId = $JsonParameters.$Environment.SubscriptionId
 
@@ -195,14 +211,19 @@ if ($null -eq (Get-AzContext)) {
             Exit 1
         } else {
             # Obtain privileged credentials from an encrypted file or operator to use to connect to the remote computers.
-            if ($null -eq $Credential) {
+            if ($null -eq $Credential -and -not $UseDeviceAuthentication) {
                 if ($NoSave) {
                     $Credential = Get-Credential
                 } else {
                     $Credential = Get-SavedCredentials -Title Azure -Renew:$Renew
                 }
             }
-            Connect-AzAccount -TenantId $TenantId -SubscriptionId $SubscriptionId -ErrorAction Stop -Credential $Credential
+            if ($UseDeviceAuthentication) {
+                Connect-AzAccount -TenantId $TenantId -SubscriptionId $SubscriptionId -ErrorAction Stop -UseDeviceAuthentication
+            } else {
+                Connect-AzAccount -TenantId $TenantId -SubscriptionId $SubscriptionId -ErrorAction Stop -Credential $Credential
+            }
+
         }
     } else {
         Write-Output "Connect with API ID: $ApiId"
@@ -213,7 +234,7 @@ if ($null -eq (Get-AzContext)) {
 } else {
     # Test if existing connection is correct or log off and back on.
     $ConnectedSubscription = (Get-AzContext).Subscription.Id
-    If ($ConnectedSubscription -eq $SubscriptionId) {
+    if ($ConnectedSubscription -eq $SubscriptionId) {
         Write-Verbose "Already connected to Azure. Skipping login."
     } else {
         Write-Output "Requested Subscription ID: $SubscriptionId not equal to currently connected Subscription ID: $ConnectedSubscription"
@@ -245,7 +266,7 @@ Write-Output "Finished Logging on to Azure"
 # Call the next PowerShell script(s) with arguments.
 if ($null -ne $InvokeCommands) {
     # Split string into array in case it has been passed incorrectly via the pipeline
-    If ($InvokeCommands -match ",") {
+    if ($InvokeCommands -match ",") {
         Write-Output "Splitting String to array"
         $InvokeCommands = $InvokeCommands.Split(",")
     }
@@ -263,7 +284,7 @@ if ($null -ne $InvokeCommands) {
         Get-Content InvokeCommand.log
 
         # Trap any errors in the log here and terminate the pipeline
-        If (Select-String -Path InvokeCommand.log -Pattern 'ERROR') {
+        if (Select-String -Path InvokeCommand.log -Pattern 'ERROR') {
             # Highlight failing line on screen
             Write-Output "==========================================="
             Select-String -Path InvokeCommand.log -Pattern 'ERROR'
