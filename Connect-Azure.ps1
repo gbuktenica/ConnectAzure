@@ -156,32 +156,40 @@ function Get-SavedCredentials {
         $Json | ConvertTo-Json -Depth 3 | Set-Content $VaultPath -ErrorAction Stop
     }
 }
-$SaveVerbosePreference = $global:VerbosePreference
-
-# Install and import dependencies
-$Modules = @("Az.Accounts", "Az.Migrate", "Az.Resources", "Az.Storage", "Az.Network")
-foreach ($Module in $Modules) {
-    if (-not (Get-Module -ListAvailable -Name $Module -Verbose:$false)) {
-        Write-Output "Installing module $Module"
-        $global:VerbosePreference = 'SilentlyContinue'
-        Install-Module -Name $Module -ErrorAction Stop -Verbose:$false -Scope CurrentUser -Force -AllowClobber | Out-Null
-        $global:VerbosePreference = $SaveVerbosePreference
-    } else {
-        Write-Verbose "Module $Module already installed."
+function Import-Dependencies {
+    param (
+        [Parameter()]
+        [array]
+        $Modules,
+        [Parameter()]
+        [string]
+        $SaveVerbosePreference
+    )
+    foreach ($Module in $Modules) {
+        if (-not (Get-Module -ListAvailable -Name $Module -Verbose:$false)) {
+            Write-Output "Installing module $Module"
+            $global:VerbosePreference = 'SilentlyContinue'
+            Install-Module -Name $Module -ErrorAction Stop -Verbose:$false -Scope CurrentUser -Force -AllowClobber | Out-Null
+            $global:VerbosePreference = $SaveVerbosePreference
+        } else {
+            Write-Verbose "Module $Module already installed."
+        }
     }
+
+    foreach ($Module in $Modules) {
+        if (-not (Get-Module -Name $Module -Verbose:$false)) {
+            Write-Output "Importing $Module module"
+            $global:VerbosePreference = 'SilentlyContinue'
+            Import-Module -Name $Module -ErrorAction Stop -Verbose:$false | Out-Null
+            $global:VerbosePreference = $SaveVerbosePreference
+        } else {
+            Write-Verbose "module $Module already imported."
+        }
+    }
+    Write-Output "Finished Importing modules"
 }
 
-foreach ($Module in $Modules) {
-    if (-not (Get-Module -Name $Module -Verbose:$false)) {
-        Write-Output "Importing $Module module"
-        $global:VerbosePreference = 'SilentlyContinue'
-        Import-Module -Name $Module -ErrorAction Stop -Verbose:$false | Out-Null
-        $global:VerbosePreference = $SaveVerbosePreference
-    } else {
-        Write-Verbose "module $Module already imported."
-    }
-}
-Write-Output "Finished Importing modules"
+Import-Dependencies -Modules @("Az.Accounts", "Az.Resources", "Az.Storage", "Az.Network") -SaveVerbosePreference = $global:VerbosePreference
 
 # Read the Azure subscription settings from the json.
 if (-not (Test-Path "$PsScriptRoot\Connect-Azure.json")) {
@@ -189,7 +197,7 @@ if (-not (Test-Path "$PsScriptRoot\Connect-Azure.json")) {
     $SubscriptionId = Read-Host "Enter Subscription ID"
     $Json = @{
         $Environment = [ordered]@{
-            TenantId  = $TenantId
+            TenantId       = $TenantId
             SubscriptionId = $SubscriptionId
         }
     }
@@ -199,8 +207,11 @@ $JsonParameters = Get-Content "$PsScriptRoot\Connect-Azure.json" -Raw -ErrorActi
 $TenantId = $JsonParameters.$Environment.TenantId
 $SubscriptionId = $JsonParameters.$Environment.SubscriptionId
 
-Write-Verbose "Azure Tenant Id: $TenantId"
-Write-Verbose "Azure Subscription Id: $SubscriptionId"
+$Params = @{
+    TenantId                = $TenantId
+    SubscriptionId          = $SubscriptionId
+    UseDeviceAuthentication = $UseDeviceAuthentication
+}
 
 if ($null -eq (Get-AzContext)) {
     # Log into Azure if no connection exists.
@@ -218,19 +229,16 @@ if ($null -eq (Get-AzContext)) {
                     $Credential = Get-SavedCredentials -Title Azure -Renew:$Renew
                 }
             }
-            if ($UseDeviceAuthentication) {
-                Connect-AzAccount -TenantId $TenantId -SubscriptionId $SubscriptionId -ErrorAction Stop -UseDeviceAuthentication
-            } else {
-                Connect-AzAccount -TenantId $TenantId -SubscriptionId $SubscriptionId -ErrorAction Stop -Credential $Credential
-            }
-
         }
     } else {
         Write-Output "Connect with API ID: $ApiId"
         $ApiSecureSecret = ConvertTo-SecureString $ApiSecret -AsPlainText -Force
         $Credential = New-Object System.Management.Automation.PSCredential($ApiId , $ApiSecureSecret)
-        Connect-AzAccount -TenantId $TenantId -SubscriptionId $SubscriptionId -ErrorAction Stop -Credential $Credential
     }
+    if ($Credential) {
+        $Params.add("Credential", $Credential)
+    }
+    Connect-AzAccount @Params
 } else {
     # Test if existing connection is correct or log off and back on.
     $ConnectedSubscription = (Get-AzContext).Subscription.Id
@@ -253,15 +261,18 @@ if ($null -eq (Get-AzContext)) {
                         $Credential = Get-SavedCredentials -Title Azure -Renew:$Renew
                     }
                 }
-                Connect-AzAccount -TenantId $TenantId -SubscriptionId $SubscriptionId -ErrorAction Stop -Credential $Credential
             } else {
                 $ApiSecureSecret = ConvertTo-SecureString $ApiSecret -AsPlainText -Force
                 $Credential = New-Object System.Management.Automation.PSCredential($ApiId , $ApiSecureSecret)
-                Connect-AzAccount -TenantId $TenantId -SubscriptionId $SubscriptionId -ErrorAction Stop -Credential $Credential
             }
         }
+        if ($Credential) {
+            $Params.add("Credential", $Credential)
+        }
+        Connect-AzAccount @Params
     }
 }
+
 Write-Output "Finished Logging on to Azure"
 # Call the next PowerShell script(s) with arguments.
 if ($null -ne $InvokeCommands) {
