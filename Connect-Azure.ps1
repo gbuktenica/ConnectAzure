@@ -189,7 +189,7 @@ function Import-Dependencies {
     Write-Output "Finished Importing modules"
 }
 
-Import-Dependencies -Modules @("Az.Accounts", "Az.Resources", "Az.Storage", "Az.Network") -SaveVerbosePreference = $global:VerbosePreference
+Import-Dependencies -Modules @("Az.Accounts", "Az.Resources", "Az.Storage", "Az.Network") -SaveVerbosePreference $global:VerbosePreference
 
 # Read the Azure subscription settings from the json.
 if (-not (Test-Path "$PsScriptRoot\Connect-Azure.json")) {
