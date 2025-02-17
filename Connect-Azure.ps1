@@ -235,7 +235,7 @@ if ($null -eq (Get-AzContext)) {
         $ApiSecureSecret = ConvertTo-SecureString $ApiSecret -AsPlainText -Force
         $Credential = New-Object System.Management.Automation.PSCredential($ApiId , $ApiSecureSecret)
     }
-    if ($Credential) {
+    if ($Credential -and -not $UseDeviceAuthentication) {
         $Params.add("Credential", $Credential)
     }
     Connect-AzAccount @Params
